@@ -7,60 +7,32 @@
     <style>
         body {
             font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 0;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            background-color: #f4f4f4;
         }
-
         .container {
             width: 80%;
-            max-width: 1000px;
-            background: #fff;
-            padding: 20px;
-            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-            border-radius: 10px;
+            margin: 0 auto;
         }
-
-        h1 {
-            text-align: center;
+        h1, h2 {
+            color: #333;
         }
-
         input, button {
-            width: calc(100% - 22px);
-            padding: 10px;
             margin: 5px 0;
+            padding: 8px;
         }
-
         button {
             cursor: pointer;
         }
-
         .dictionary-list {
             list-style-type: none;
             padding: 0;
         }
-
-        .dictionary-list li {
-            margin-bottom: 10px;
-        }
-
         .dictionary-item {
-            border: 1px solid #ddd;
+            margin-bottom: 10px;
             padding: 10px;
-            border-radius: 5px;
-            background-color: #fafafa;
+            border: 1px solid #ddd;
         }
-
-        .dictionary-item .header {
+        .header {
             font-weight: bold;
-        }
-
-        .hidden {
-            display: none;
         }
     </style>
 </head>
@@ -98,27 +70,37 @@
             <button onclick="displayDictionary()">辞書を表示</button>
             <ul id="dictionary-list" class="dictionary-list"></ul>
         </div>
-        <div>
-            <h2>辞書をエクスポート/インポート</h2>
-            <input type="file" id="import-file" class="hidden" accept=".json">
-            <button onclick="document.getElementById('import-file').click()">辞書をインポート</button>
-            <input type="text" id="export-filename" placeholder="エクスポートするファイル名">
-            <button onclick="exportDictionary()">辞書をエクスポート</button>
-        </div>
     </div>
 
     <script>
+        const API_URL = 'https://api.github.com/repos/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/contents/dictionaries/';
+        const token = 'YOUR_GITHUB_TOKEN';
         let currentDictionary = '';
 
         function loadDictionary() {
-            if (!currentDictionary) return { words: [], version: 2, settings: {} };
-            const dictionary = localStorage.getItem(`dictionary_${currentDictionary}`);
-            return dictionary ? JSON.parse(dictionary) : { words: [], version: 2, settings: {} };
+            if (!currentDictionary) return {};
+            return fetch(`${API_URL}${currentDictionary}.json`, {
+                headers: { 'Authorization': `token ${token}` }
+            })
+            .then(response => response.json())
+            .then(data => JSON.parse(atob(data.content)))
+            .catch(() => ({}));
         }
 
         function saveDictionary(dictionary) {
             if (currentDictionary) {
-                localStorage.setItem(`dictionary_${currentDictionary}`, JSON.stringify(dictionary));
+                const content = btoa(JSON.stringify(dictionary));
+                fetch(`${API_URL}${currentDictionary}.json`, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `token ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        message: 'Update dictionary',
+                        content: content
+                    })
+                });
             }
         }
 
@@ -131,21 +113,16 @@
 
         function searchWord() {
             const word = document.getElementById('search-input').value;
-            const dictionary = loadDictionary();
-            const result = dictionary.words.find(w => w.entry.form === word) || {
-                translations: [],
-                tags: [],
-                contents: [],
-                variations: [],
-                relations: []
-            };
-            document.getElementById('search-result').innerHTML = `
-                <div class="dictionary-item">
-                    <strong>${word}</strong>: ${result.contents.map(c => c.text).join('<br>')}<br>
-                    発音: ${result.contents.find(c => c.title === '発音')?.text || 'N/A'}<br>
-                    関連語: ${result.relations.map(r => r.entry.form).join(', ')}
-                </div>
-            `;
+            loadDictionary().then(dictionary => {
+                const result = dictionary.words.find(w => w.entry.form === word);
+                const displayResult = result ? `
+                    <div class="dictionary-item">
+                        <strong>${word}</strong>: ${result.contents.map(c => c.text).join('<br>')}
+                        <br>発音: ${result.translations.map(t => t.forms.join(', ')).join(', ')}
+                        <br>関連語: ${result.relations.map(r => r.entry.form).join(', ')}
+                    </div>` : "単語が見つかりませんでした。";
+                document.getElementById('search-result').innerHTML = displayResult;
+            });
         }
 
         function addWord() {
@@ -153,97 +130,59 @@
             const definition = document.getElementById('add-definition').value;
             const pronunciation = document.getElementById('add-pronunciation').value;
             const related = document.getElementById('add-related').value.split(',').map(r => r.trim());
-            const dictionary = loadDictionary();
-
-            if (dictionary.words.find(w => w.entry.form === word)) {
-                document.getElementById('add-result').textContent = "単語はすでに存在しています。";
-            } else {
-                dictionary.words.push({
+            loadDictionary().then(dictionary => {
+                const newWord = {
                     entry: { id: Date.now(), form: word },
-                    translations: [],
+                    translations: [{ title: "訳", forms: [pronunciation] }],
                     tags: [],
-                    contents: [
-                        { title: '説明', text: definition },
-                        { title: '発音', text: pronunciation }
-                    ],
+                    contents: [{ title: "説明", text: definition }],
                     variations: [],
-                    relations: related.map(r => ({ title: '関連語', entry: { id: Date.now(), form: r } }))
-                });
-                saveDictionary(dictionary);
-                document.getElementById('add-result').textContent = "単語が追加されました。";
-            }
+                    relations: related.map(r => ({
+                        title: "関連語",
+                        entry: { id: Date.now(), form: r }
+                    }))
+                };
+                if (dictionary.words.find(w => w.entry.form === word)) {
+                    document.getElementById('add-result').textContent = "単語はすでに存在しています。";
+                } else {
+                    dictionary.words.push(newWord);
+                    saveDictionary(dictionary);
+                    document.getElementById('add-result').textContent = "単語が追加されました。";
+                }
+            });
         }
 
         function deleteWord() {
             const word = document.getElementById('delete-word').value;
-            const dictionary = loadDictionary();
-
-            const index = dictionary.words.findIndex(w => w.entry.form === word);
-            if (index > -1) {
-                dictionary.words.splice(index, 1);
-                saveDictionary(dictionary);
-                document.getElementById('delete-result').textContent = "単語が削除されました。";
-            } else {
-                document.getElementById('delete-result').textContent = "単語が見つかりませんでした。";
-            }
-        }
-
-        function displayDictionary() {
-            const dictionary = loadDictionary();
-            const dictionaryList = document.getElementById('dictionary-list');
-            dictionaryList.innerHTML = '';
-
-            dictionary.words.forEach(wordData => {
-                const listItem = document.createElement('li');
-                listItem.innerHTML = `
-                    <div class="dictionary-item">
-                        <div class="header">${wordData.entry.form}</div>
-                        <div>説明: ${wordData.contents.find(c => c.title === '説明')?.text || 'N/A'}</div>
-                        <div>発音: ${wordData.contents.find(c => c.title === '発音')?.text || 'N/A'}</div>
-                        <div>関連語: ${wordData.relations.map(r => r.entry.form).join(', ')}</div>
-                    </div>
-                `;
-                dictionaryList.appendChild(listItem);
+            loadDictionary().then(dictionary => {
+                const index = dictionary.words.findIndex(w => w.entry.form === word);
+                if (index !== -1) {
+                    dictionary.words.splice(index, 1);
+                    saveDictionary(dictionary);
+                    document.getElementById('delete-result').textContent = "単語が削除されました。";
+                } else {
+                    document.getElementById('delete-result').textContent = "単語が見つかりませんでした。";
+                }
             });
         }
 
-        function exportDictionary() {
-            const dictionary = loadDictionary();
-            const filename = document.getElementById('export-filename').value || 'dictionary.json';
-            const blob = new Blob([JSON.stringify(dictionary, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+        function displayDictionary() {
+            loadDictionary().then(dictionary => {
+                const dictionaryList = document.getElementById('dictionary-list');
+                dictionaryList.innerHTML = '';
+                dictionary.words.forEach(word => {
+                    const listItem = document.createElement('li');
+                    listItem.innerHTML = `
+                        <div class="dictionary-item">
+                            <div class="header">${word.entry.form}</div>
+                            <div>説明: ${word.contents.map(c => c.text).join('<br>')}</div>
+                            <div>発音: ${word.translations.map(t => t.forms.join(', ')).join(', ')}</div>
+                            <div>関連語: ${word.relations.map(r => r.entry.form).join(', ')}</div>
+                        </div>`;
+                    dictionaryList.appendChild(listItem);
+                });
+            });
         }
-
-        function importDictionary(event) {
-            const file = event.target.files[0];
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = function() {
-                    try {
-                        const data = JSON.parse(reader.result);
-                        if (data.words && data.version && data.settings) {
-                            saveDictionary(data);
-                            displayDictionary();
-                            alert('辞書がインポートされました。');
-                        } else {
-                            alert('辞書の形式が正しくありません。');
-                        }
-                    } catch (e) {
-                        alert('辞書のインポートに失敗しました。');
-                    }
-                };
-                reader.readAsText(file);
-            }
-        }
-
-        document.getElementById('import-file').addEventListener('change', importDictionary);
     </script>
 </body>
 </html>
